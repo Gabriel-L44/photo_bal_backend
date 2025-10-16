@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Photo Bal — Casino Night</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#07060a;
+    --accent:#d4b14a;
+    --muted:#bfbfbf;
+    --card:#0f1113;
+    font-family: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,#071018 0%, #0b0b0f 100%);color:#fff;}
+  .wrap{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;}
+  .card{width:100%;max-width:480px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.12));border-radius:16px;padding:14px;box-shadow:0 6px 30px rgba(0,0,0,0.6);}
+  header{display:flex;gap:12px;align-items:center;margin-bottom:8px;}
+  .logo{width:56px;height:56px;border-radius:12px;background:linear-gradient(135deg,var(--accent),#f0c96a);display:flex;align-items:center;justify-content:center;color:#071018;font-weight:800;font-size:20px;}
+  h1{margin:0;font-size:18px;font-weight:800;}
+  p.lead{margin:6px 0 14px;color:var(--muted);font-size:13px;}
+  .viewer{position:relative;background:#000;border-radius:12px;overflow:hidden;height:64vh;max-height:720px;display:flex;align-items:center;justify-content:center;}
+  video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+  .frame{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:86%;height:66%;border-radius:10px;box-shadow: inset 0 0 0 4px rgba(212,177,74,0.9);pointer-events:none;}
+  .takenOverlay{position:absolute;inset:0;background:linear-gradient(180deg, rgba(2,2,2,0.3), rgba(0,0,0,0.6));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;color:var(--accent);}
+  .preview{display:none;flex-direction:column;gap:10px;align-items:center;margin-top:10px;}
+  .preview img{max-width:100%;border-radius:10px;border:4px solid rgba(0,0,0,0.35);box-shadow:0 8px 20px rgba(0,0,0,0.6);}
+  .actions{display:flex;gap:10px;align-items:center;justify-content:center;margin-top:12px;flex-wrap:wrap;}
+  button{border:0;padding:12px 18px;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;box-shadow: 0 6px 18px rgba(3,3,3,0.5);}
+  .btn-primary{background:linear-gradient(90deg,var(--accent),#ffd87d);color:#071018;}
+  .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);}
+  .btn-disabled{opacity:0.45;cursor:not-allowed;}
+  small{color:var(--muted);}
+  @media (max-width:420px){
+    .viewer{height:62vh;}
+    .card{padding:12px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" role="main">
+    <header>
+      <div class="logo">BJ</div>
+      <div>
+        <h1>Photo du bal — Casino Night</h1>
+        <p class="lead">Scannez le QR → Cadrez → Prenez. Une seule photo par téléphone.</p>
+      </div>
+    </header>
+
+    <div id="app">
+      <div class="viewer" id="viewer">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="frame" aria-hidden="true"></div>
+        <div class="takenOverlay" id="takenOverlay" style="display:none;">Photo prise — merci !</div>
+      </div>
+
+      <div class="preview" id="preview">
+        <img id="photoPreview" alt="Votre photo">
+        <small id="hint">Votre photo a été envoyée.</small>
+      </div>
+
+      <div class="actions">
+        <button id="captureBtn" class="btn-primary">📸 Prendre la photo</button>
+        <button id="retryBtn" class="btn-ghost" style="display:none;">↺ Retenter (si erreur)</button>
+        <a id="manualDownload" style="display:none;text-decoration:none;">
+          <button id="downloadBtn" class="btn-ghost">⬇️ Télécharger</button>
+        </a>
+      </div>
+
+      <p style="margin-top:12px;font-size:12px;color:var(--muted)">
+        Les photos sont envoyées automatiquement à l'organisation. <strong>Pas besoin de se connecter.</strong>
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+/* --- CONFIG --- */
+const BACKEND_UPLOAD_URL = (window.location.hostname === 'localhost') ? 'http://localhost:3000/upload' : 'https://REPLACE_WITH_YOUR_BACKEND_URL/upload';
+// change to your deployed backend URL
+
+/* --- App state --- */
+const video = document.getElementById('video');
+const captureBtn = document.getElementById('captureBtn');
+const retryBtn = document.getElementById('retryBtn');
+const preview = document.getElementById('preview');
+const photoPreview = document.getElementById('photoPreview');
+const takenOverlay = document.getElementById('takenOverlay');
+const downloadLink = document.getElementById('manualDownload');
+const downloadBtn = document.getElementById('downloadBtn');
+
+const STORAGE_KEY = 'bal_photo_taken_v1';
+
+/* Start camera */
+let stream = null;
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+    video.srcObject = stream;
+  } catch (err) {
+    console.error('Camera error', err);
+    alert("Impossible d'accéder à la caméra. Vérifie les permissions et que la page est en HTTPS.");
+  }
+}
+
+/* Stop camera */
+function stopCamera(){
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+}
+
+/* Disable capture UI after taken */
+function disableCaptureUIAfterTaken(){
+  captureBtn.classList.add('btn-disabled');
+  captureBtn.disabled = true;
+  captureBtn.textContent = "📸 Photo déjà prise";
+}
+
+/* Capture photo */
+async function capturePhoto() {
+  if (localStorage.getItem(STORAGE_KEY)) {
+    alert("Une photo a déjà été prise depuis ce téléphone.");
+    return;
+  }
+  captureBtn.disabled = true;
+  captureBtn.textContent = "En cours...";
+
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(w, 0);
+  ctx.scale(-1,1);
+  ctx.drawImage(video, 0, 0, w, h);
+
+  // Convert to blob
+  canvas.toBlob(async (blob) => {
+    if (!blob) {
+      alert('Erreur lors de la capture.');
+      captureBtn.disabled = false;
+      captureBtn.textContent = "📸 Prendre la photo";
+      return;
+    }
+
+    // Show preview
+    const url = URL.createObjectURL(blob);
+    photoPreview.src = url;
+    preview.style.display = 'flex';
+    takenOverlay.style.display = 'flex';
+    stopCamera();
+
+    // Try upload to backend
+    try {
+      const form = new FormData();
+      form.append('photo', blob, `photo_bal_${Date.now()}.jpg`);
+      // optional metadata: phone id (local random) to help dedupe
+      let phoneId = localStorage.getItem('bal_phone_id_v1');
+      if (!phoneId) {
+        phoneId = Math.random().toString(36).slice(2,10);
+        localStorage.setItem('bal_phone_id_v1', phoneId);
+      }
+      form.append('phoneId', phoneId);
+
+      const res = await fetch(BACKEND_UPLOAD_URL, {
+        method: 'POST',
+        body: form,
+        credentials: 'omit'
+      });
+
+      if (!res.ok) throw new Error('Erreur serveur ' + res.status);
+      const json = await res.json();
+      // success
+      localStorage.setItem(STORAGE_KEY, new Date().toISOString());
+      disableCaptureUIAfterTaken();
+      downloadLink.style.display = 'inline-block';
+      downloadBtn.textContent = '⬇️ Télécharger';
+      // create download link
+      const blobUrl = URL.createObjectURL(blob);
+      downloadLink.href = blobUrl;
+      downloadLink.download = `photo_bal_${Date.now()}.jpg`;
+      // optionally show server response
+      if (json && json.fileId) {
+        document.getElementById('hint').textContent = 'Photo envoyée (ID: ' + json.fileId + ')';
+      } else {
+        document.getElementById('hint').textContent = 'Photo envoyée.';
+      }
+    } catch (err) {
+      console.error('Upload failed', err);
+      alert('Échec de l\'envoi automatique. Tu peux télécharger la photo manuellement, ou réessayer.');
+      retryBtn.style.display = 'inline-block';
+      downloadLink.style.display = 'inline-block';
+      downloadLink.href = url;
+      downloadLink.download = `photo_bal_${Date.now()}.jpg`;
+      captureBtn.disabled = false;
+      captureBtn.textContent = "📸 Prendre la photo";
+    }
+  }, 'image/jpeg', 0.92);
+}
+
+/* retry handler just restarts camera if user wants to retake */
+retryBtn.addEventListener('click', () => {
+  retryBtn.style.display = 'none';
+  preview.style.display = 'none';
+  takenOverlay.style.display = 'none';
+  startCamera();
+});
+
+/* init */
+window.addEventListener('load', async () => {
+  if (localStorage.getItem(STORAGE_KEY)) {
+    disableCaptureUIAfterTaken();
+    document.getElementById('hint').textContent = 'Photo déjà prise depuis ce téléphone.';
+  } else {
+    await startCamera();
+  }
+});
+
+/* events */
+captureBtn.addEventListener('click', capturePhoto);
+window.addEventListener('beforeunload', () => stopCamera());
+</script>
+</body>
+</html>
